@@ -51,6 +51,48 @@ pub async fn read_path(stream: &mut TcpStream) -> Result<Vec<String>, io::Error>
     Ok(path)
 }
 
+// Optional fields are encoded as a 0/1 flag byte followed by the value when 1.
+async fn read_flag(stream: &mut TcpStream, field: &str) -> Result<bool, io::Error> {
+    match read_u8(stream).await? {
+        0 => Ok(false),
+        1 => Ok(true),
+        flag => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid {field} exists flag: {flag}"),
+        )),
+    }
+}
+
+pub async fn read_optional_u32(stream: &mut TcpStream, field: &str) -> Result<Option<u32>, io::Error> {
+    if read_flag(stream, field).await? {
+        return Ok(Some(read_u32(stream).await?));
+    }
+
+    Ok(None)
+}
+
+pub async fn read_optional_string_u16(
+    stream: &mut TcpStream,
+    field: &str,
+) -> Result<Option<String>, io::Error> {
+    if read_flag(stream, field).await? {
+        return Ok(Some(read_string_u16(stream).await?));
+    }
+
+    Ok(None)
+}
+
+pub async fn read_optional_string_u32(
+    stream: &mut TcpStream,
+    field: &str,
+) -> Result<Option<String>, io::Error> {
+    if read_flag(stream, field).await? {
+        return Ok(Some(read_string_u32(stream).await?));
+    }
+
+    Ok(None)
+}
+
 pub async fn write_u8(stream: &mut TcpStream, value: u8) -> Result<(), io::Error> {
     stream.write_all(&[value]).await
 }
@@ -95,6 +137,42 @@ pub async fn write_string_u32(stream: &mut TcpStream, value: &str) -> Result<(),
 
     write_u32(stream, len).await?;
     stream.write_all(bytes).await
+}
+
+pub async fn write_optional_string_u16(
+    stream: &mut TcpStream,
+    value: &Option<String>,
+) -> Result<(), io::Error> {
+    write_bool(stream, value.is_some()).await?;
+
+    match value {
+        Some(value) => write_string_u16(stream, value).await,
+        None => Ok(()),
+    }
+}
+
+pub async fn write_optional_string_u32(
+    stream: &mut TcpStream,
+    value: &Option<String>,
+) -> Result<(), io::Error> {
+    write_bool(stream, value.is_some()).await?;
+
+    match value {
+        Some(value) => write_string_u32(stream, value).await,
+        None => Ok(()),
+    }
+}
+
+pub async fn write_optional_path(
+    stream: &mut TcpStream,
+    path: &Option<Vec<String>>,
+) -> Result<(), io::Error> {
+    write_bool(stream, path.is_some()).await?;
+
+    match path {
+        Some(path) => write_path(stream, path).await,
+        None => Ok(()),
+    }
 }
 
 pub async fn write_path(stream: &mut TcpStream, path: &[String]) -> Result<(), io::Error> {

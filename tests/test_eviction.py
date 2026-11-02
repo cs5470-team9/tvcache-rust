@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
+import os
 import json
 import time
 from dataclasses import dataclass
@@ -10,7 +11,7 @@ from cache_client import AsyncPersistentCacheClient
 
 
 HOST = "127.0.0.1"
-PORT = 7878
+PORT = int(os.environ.get("TVCACHE_PORT", "7878"))
 TIMEOUT_SECONDS = 30
 RETRIES = 5
 RETRY_BACKOFF_SECONDS = 0.1

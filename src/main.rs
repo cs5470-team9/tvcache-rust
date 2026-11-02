@@ -22,8 +22,8 @@ use types::CacheSharedObject;
 async fn main() -> io::Result<()> {
     init_tracing();
 
-    let listener = TcpListener::bind("0.0.0.0:7878").await?;
-    let eviction_policy_config = parse_eviction_policy_config();
+    let (port, eviction_policy_config) = parse_args();
+    let listener = TcpListener::bind(("0.0.0.0", port)).await?;
 
     let cache_shared_object: CacheSharedObject = Arc::new(Mutex::new(TVCache::new()));
     let eviction_cache = Arc::clone(&cache_shared_object);
@@ -32,16 +32,29 @@ async fn main() -> io::Result<()> {
         cache_policy_enforcer::run_eviction_loop(eviction_cache, eviction_policy_config).await;
     });
 
-    info!("listening on 127.0.0.1:7878 with tokio");
+    info!("listening on 0.0.0.0:{port} with tokio");
+
+    serve(listener, cache_shared_object).await;
+
+    Ok(())
+}
+
+// Separate from main so tests can run an in-process server on an ephemeral port.
+pub async fn serve(listener: TcpListener, cache_shared_object: CacheSharedObject) {
+    // Each connection gets a unique id; pending-node ownership is tied to it so
+    // a closed connection identifies a crashed owner.
+    let mut next_connection_id: u64 = 0;
 
     loop {
         match listener.accept().await {
             Ok((tcp_stream, _ /*this is socket attress but I am nto usin this */)) => {
                 let cache_shared_object = Arc::clone(&cache_shared_object);
                 let stream = tcp_stream;
+                next_connection_id += 1;
+                let connection_id = next_connection_id;
 
                 tokio::spawn(async move {
-                    let request_handler = RequestHandler::new(cache_shared_object);
+                    let mut request_handler = RequestHandler::new(cache_shared_object, connection_id);
                     request_handler.handle_stream(stream).await;
                 });
             }
@@ -58,13 +71,16 @@ fn init_tracing() {
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 }
 
-fn parse_eviction_policy_config() -> EvictionPolicyConfig {
+fn parse_args() -> (u16, EvictionPolicyConfig) {
+    let mut port: u16 = 7878;
     let mut eviction_policy = String::from("ttl_and_watermark");
     let mut high_watermark_mb = 1024;
     let mut low_watermark_mb = 768;
 
     for arg in env::args().skip(1) {
-        if let Some(value) = arg.strip_prefix("--eviction-policy=") {
+        if let Some(value) = arg.strip_prefix("--port=") {
+            port = value.parse().unwrap_or(port);
+        } else if let Some(value) = arg.strip_prefix("--eviction-policy=") {
             eviction_policy = value.to_string();
         } else if let Some(value) = arg.strip_prefix("--high-watermark-mb=") {
             high_watermark_mb = value.parse().unwrap_or(high_watermark_mb);
@@ -79,5 +95,8 @@ fn parse_eviction_policy_config() -> EvictionPolicyConfig {
         _ => EvictionPolicyName::TtlAndWatermark,
     };
 
-    EvictionPolicyConfig::new(policy_name, high_watermark_mb, low_watermark_mb)
+    (
+        port,
+        EvictionPolicyConfig::new(policy_name, high_watermark_mb, low_watermark_mb),
+    )
 }

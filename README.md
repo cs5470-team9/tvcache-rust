@@ -43,6 +43,14 @@ State for one task is a **Tool Call Graph (TCG)** — a prefix tree (trie):
   sandbox snapshot**, so the client forks from there and executes only the
   missing suffix.
 
+- **Pending nodes** (coalescing): `Claim` creates a node *before* its call
+  executes. The first caller becomes its owner and executes; concurrent callers
+  get `pending` and long-poll `Inspect` until the owner `Publish`es the value,
+  so the call runs once. Ownership is the claiming connection plus a per-node
+  `generation`: a closed owner connection fails its claims, waking waiters to
+  execute themselves, and the next claim takes over with `generation + 1`.
+  Eviction never removes a subtree with a pending node.
+
 Around the graph the server tracks:
 
 - **Sandbox references** — `find` increments a snapshot's refcount (the rollout
@@ -54,8 +62,8 @@ Around the graph the server tracks:
 
 ## Architecture
 
-- Tokio TCP server on `0.0.0.0:7878` (`src/main.rs`); one spawned task per
-  connection, requests handled sequentially on each connection
+- Tokio TCP server on `0.0.0.0:7878` (`--port=` to change; `src/main.rs`); one
+  spawned task per connection, requests handled sequentially on each connection
   (`src/request_handler.rs`).
 - Shared state is `Arc<Mutex<TVCache>>`, where `TVCache` is
   `HashMap<task_id, Arc<Mutex<ToolCallGraph>>>` (`src/tvcache.rs`).
@@ -71,6 +79,7 @@ cargo run -- --eviction-policy=ttl_and_watermark \
              --high-watermark-mb=1024 --low-watermark-mb=768
 RUST_LOG=debug cargo run        # tracing via EnvFilter
 cargo test
+scripts/test.sh                 # Rust tests plus all Python tests against fresh servers
 ```
 
 `--eviction-policy` accepts `ttl_and_watermark` (default) or `none`.
@@ -93,6 +102,9 @@ is the reference encoder/decoder.
 | 8 | `ListHotSandboxes` | Most-useful sandboxes (descending lpm score) for pre-forking. |
 | 9 | `ReportForkCost` | Fold a fork-time sample into the task EMA. |
 | 10 | `GetForkCost` | Read the task's fork-cost EMA. |
+| 11 | `Claim` | Atomically resolve entries under a prefix: ready, pending, owner, or missing; leases the prefix sandbox to callers that execute. |
+| 12 | `Inspect` | Read-only entry status; with `wait_ms`, a long poll until no entry is pending. |
+| 13 | `Publish` | Owner completes its claim (`Insert` plus `generation`); no value marks it failed. |
 
 ## Roadmap
 

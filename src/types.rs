@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::{tcg::ToolCallGraph, tvcache::TVCache};
+use crate::{
+    tcg::{tool_call_graph::ClaimOutcome, ToolCallGraph},
+    tvcache::TVCache,
+};
 
 pub type CacheSharedObject = Arc<Mutex<TVCache>>;
 pub type TcgSharedObject = Arc<Mutex<ToolCallGraph>>;
@@ -55,6 +58,28 @@ pub enum Request {
     GetForkCost {
         task_id: String,
     },
+    // Claim and Inspect address sibling entries under one shared prefix, so a
+    // turn with several calls is a single request.
+    Claim {
+        task_id: String,
+        prefix: Vec<String>,
+        entries: Vec<String>,
+    },
+    Inspect {
+        task_id: String,
+        prefix: Vec<String>,
+        entries: Vec<String>,
+        wait_ms: u32,
+    },
+    Publish {
+        task_id: String,
+        path: Vec<String>,
+        generation: u32,
+        runtime: u32,
+        value: Option<String>, // None reports that the owner's execution failed
+        sandbox_id: Option<String>,
+        ttl: Option<u32>,
+    },
 }
 
 pub enum Response {
@@ -87,6 +112,11 @@ pub enum Response {
     },
     Json {
         json: String,
+    },
+    ClaimResults {
+        sandbox_path: Option<Vec<String>>,
+        sandbox_id: Option<String>,
+        outcomes: Vec<ClaimOutcome>,
     },
 }
 
